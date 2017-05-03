@@ -2,12 +2,13 @@
 #include <amxmisc>
 #include <reapi>
 
-#define PLUGIN_VERSION "1.0"
+#define PLUGIN_VERSION "1.1"
 
 enum _:PlayerRewards
 {
 	RewardType:Type,
 	Math[16],
+	Round[16],
 	Flags
 }
 
@@ -15,12 +16,14 @@ new const g_szAll[] = "#all"
 
 new Array:g_aPlayerRewards,
 	g_szMap[32],
+	g_iCurrentRound,
 	g_iTotalPlayerRewards
 
 public plugin_init()
 {
 	register_plugin("Money Rewards Modifier", PLUGIN_VERSION, "OciXCrom")
 	register_cvar("CRXMoneyModifier", PLUGIN_VERSION, FCVAR_SERVER|FCVAR_SPONLY|FCVAR_UNLOGGED)
+	RegisterHookChain(RG_CSGameRules_OnRoundFreezeEnd, "ReAPI_HC_OnRoundFreezeEnd")
 	RegisterHookChain(RG_CBasePlayer_AddAccount, "ReAPI_HC_AddAccount_Pre")	
 	get_mapname(g_szMap, charsmax(g_szMap))
 	g_aPlayerRewards = ArrayCreate(PlayerRewards)
@@ -114,7 +117,8 @@ ReadFile()
 							else continue
 							
 							szFlags[0] = EOS
-							parse(szValue, eReward[Math], charsmax(eReward[Math]), szFlags, charsmax(szFlags))
+							eReward[Round][0] = EOS
+							parse(szValue, eReward[Math], charsmax(eReward[Math]), eReward[Round], charsmax(eReward[Round]), szFlags, charsmax(szFlags))
 							eReward[Flags] = szFlags[0] ? read_flags(szFlags) : ADMIN_ALL
 							ArrayPushArray(g_aPlayerRewards, eReward)
 							g_iTotalPlayerRewards++
@@ -177,6 +181,9 @@ ReadFile()
 	}
 }
 
+public ReAPI_HC_OnRoundFreezeEnd()
+	g_iCurrentRound = get_member_game(m_iTotalRoundsPlayed) + 1
+	
 public ReAPI_HC_AddAccount_Pre(id, iAmount, RewardType:iType, bool:bChange)
 {
 	static eReward[PlayerRewards]
@@ -186,7 +193,7 @@ public ReAPI_HC_AddAccount_Pre(id, iAmount, RewardType:iType, bool:bChange)
 	{
 		ArrayGetArray(g_aPlayerRewards, i, eReward)
 		
-		if(eReward[Type] == iType && iFlags & eReward[Flags] == eReward[Flags])
+		if(eReward[Type] == iType && is_valid_round(eReward[Round]) && iFlags & eReward[Flags] == eReward[Flags])
 		{
 			bMatch = true
 			iAmount = math_add(iAmount, eReward[Math])
@@ -197,6 +204,39 @@ public ReAPI_HC_AddAccount_Pre(id, iAmount, RewardType:iType, bool:bChange)
 		SetHookChainArg(2, ATYPE_INTEGER, iAmount)
 }
 
+bool:is_valid_round(const szRound[])
+{
+	if(!szRound[0] || szRound[0] == '0')
+		return true
+		
+	if(contain(szRound, "-") != -1)
+	{
+		static szMin[4], szMax[4]
+		strtok(szRound, szMin, charsmax(szMin), szMax, charsmax(szMax), '-')
+		trim(szMin); trim(szMax)
+		return str_to_num(szMin) <= g_iCurrentRound <= str_to_num(szMax)
+	}
+	else if(isdigit(szRound[0]))
+		return g_iCurrentRound == str_to_num(szRound)
+		
+	static szNewRound[16], cOperator, iNum
+	copy(szNewRound, charsmax(szNewRound), szRound)
+	replace_all(szNewRound, charsmax(szNewRound), " ", "")
+	cOperator = szRound[0]
+	szNewRound[0] = ' '
+	
+	trim(szNewRound)
+	iNum = str_to_num(szNewRound)
+	
+	switch(cOperator)
+	{
+		case '>': return g_iCurrentRound > iNum
+		case '<': return g_iCurrentRound < iNum
+	}
+	
+	return false
+}
+
 math_add(iNum, const szMath[])
 {
 	static szNewMath[16], bool:bPercent, cOperator, iMath
@@ -205,7 +245,7 @@ math_add(iNum, const szMath[])
 	bPercent = szNewMath[strlen(szNewMath) - 1] == '%'
 	cOperator = szNewMath[0]
    
-	if(!isdigit(szNewMath[0]))
+	if(!isdigit(cOperator))
 		szNewMath[0] = ' '
    
 	if(bPercent)
